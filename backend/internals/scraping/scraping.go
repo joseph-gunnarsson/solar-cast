@@ -1,15 +1,16 @@
 package scraping
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
+
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gocolly/colly"
+
+	"github.com/joseph-gunnarsson/solar-cast/internals/solar"
 )
 
 var userAgents = []string{
@@ -21,7 +22,7 @@ var userAgents = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
 }
 
-func GetProductURLs() []string {
+func GetProductURLs(pages int) []string {
 	var productURLs []string
 	c := colly.NewCollector(
 		colly.AllowedDomains("www.enfsolar.com", "enfsolar.com"),
@@ -57,7 +58,7 @@ func GetProductURLs() []string {
 		productURLs = append(productURLs, fullURL)
 	})
 
-	for page := 1; page < 2; page++ {
+	for page := 1; page < pages; page++ {
 		if page > 1 && (page-1)%5 == 0 {
 			userAgentIndex = (userAgentIndex + 1) % len(userAgents)
 			log.Println("----------------------------------------------------")
@@ -92,13 +93,6 @@ func GetProductURLs() []string {
 	return productURLs
 }
 
-type SolarPanelData struct {
-	NOCT_Temp                  float64 `json:"noct_temp"`
-	ModelNo                    string  `json:"model_no"`
-	TemperatureCoefficientPmax float64 `json:"temperature_coefficient_pmax"`
-	MaximumPowerPmax           float64 `json:"maximum_power_pmax"`
-}
-
 func parseWatts(wattStr string) float64 {
 	wattStr = strings.TrimSpace(strings.Replace(wattStr, "Wp", "", -1))
 	val, _ := strconv.ParseFloat(wattStr, 64)
@@ -111,16 +105,15 @@ func parseTemperature(tempStr string) float64 {
 }
 
 func parseTempCoeff(coeffStr string) float64 {
-
 	coeffStr = strings.TrimSpace(strings.Replace(coeffStr, "%/°C", "", -1))
 	val, _ := strconv.ParseFloat(coeffStr, 64)
 	return val / 100.0
 }
 
-func GatherSolarPanelData(urls []string) map[string]SolarPanelData {
+func GatherSolarPanelData(urls []string) map[string]solar.SolarPanelData {
 
-	solarPanelData := SolarPanelData{}
-	solarPanelDataMap := make(map[string]SolarPanelData)
+	solarPanelData := solar.SolarPanelData{}
+	solarPanelDataMap := make(map[string]solar.SolarPanelData)
 
 	c := colly.NewCollector(
 		colly.AllowedDomains("www.enfsolar.com", "enfsolar.com"),
@@ -170,36 +163,9 @@ func GatherSolarPanelData(urls []string) map[string]SolarPanelData {
 			break
 		}
 		solarPanelDataMap[solarPanelData.ModelNo] = solarPanelData
-		solarPanelData = SolarPanelData{}
+		solarPanelData = solar.SolarPanelData{}
 	}
 	fmt.Println("Gathered solar panel data for", len(solarPanelDataMap), "models.")
 	log.Println("Finished gathering solar panel data.")
 	return solarPanelDataMap
-}
-
-func SaveSolarPanelDataToFile(data map[string]SolarPanelData) error {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile("data/solar_panel_data.json", jsonData, 0644)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func LoadSolarPanelData() (map[string]SolarPanelData, error) {
-	data := make(map[string]SolarPanelData)
-	jsonData, err := os.ReadFile("data/solar_panel_data.json")
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(jsonData, &data)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
 }

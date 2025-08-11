@@ -1,57 +1,110 @@
 package main
 
 import (
-	"fmt"
+	"flag"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/joseph-gunnarsson/solar-cast/api"
 	"github.com/joseph-gunnarsson/solar-cast/internals/scraping"
-	solarcalc "github.com/joseph-gunnarsson/solar-cast/internals/solar_calc"
+	"github.com/joseph-gunnarsson/solar-cast/internals/solar"
 )
 
 func main() {
+	// Flags
+	scrape := flag.Bool("scrape", false, "run web scraping to collect panel data")
+	serve := flag.Bool("serve", false, "start the HTTP server")
+	pages := flag.Int("pages", 1, "number of pages to scrape from ENF Solar listing")
+	flag.Parse()
 
-	panel := scraping.SolarPanelData{
-		ModelNo:                    "SKT410M10-108D4",
-		NOCT_Temp:                  45.0,
-		TemperatureCoefficientPmax: -0.0029,
-		MaximumPowerPmax:           410.0,
+	loadEnvIfLocal()
+
+	var scraped map[string]solar.SolarPanelData
+	var err error
+
+	if *scrape {
+		scraped, err = runScrape(*pages)
+		if err != nil {
+			log.Fatalf("scrape failed: %v", err)
+		}
+		log.Printf("scrape complete (%d models).", len(scraped))
 	}
-	ambient := 30.0     // °C
-	irradiance := 850.0 // W/m²
-	hours := 1.0        // equivalent full‑sun hours
 
-	wh, err := solarcalc.CalculateSolarPanelOutputByHour(panel, ambient, irradiance, hours)
-	if err != nil {
-		panic(err)
+	if *serve {
+		// Prefer freshly-scraped data; otherwise load from disk.
+		data := scraped
+		if len(data) == 0 {
+			data, err = solar.LoadSolarPanelData()
+			if err != nil {
+				log.Fatalf("load panel data failed: %v", err)
+			}
+		}
+		if err := runServer(data); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+		return
 	}
-	fmt.Printf("Energy in 1h: %.2f Wh\n", wh)
 
-	_, inDocker := os.LookupEnv("DOCKER_CONTAINER")
+	if !*scrape && !*serve {
+		flag.Usage()
+	}
+}
+
+// runScrape collects panel URLs, scrapes details, and saves to file.
+func runScrape(pages int) (map[string]solar.SolarPanelData, error) {
+	log.Printf("Starting scrape for %d page(s)…", pages)
+	urls := scraping.GetProductURLs(pages)
+	if len(urls) == 0 {
+		log.Println("No product URLs found.")
+		return map[string]solar.SolarPanelData{}, nil
+	}
+
+	data := scraping.GatherSolarPanelData(urls)
+	if len(data) == 0 {
+		log.Println("Scrape returned 0 panels.")
+		return data, nil
+	}
+
+	if err := solar.SaveSolarPanelDataToFile(data); err != nil {
+		return nil, err
+	}
+	log.Printf("Saved %d panels to data/solar_panel_data.json", len(data))
+	return data, nil
+}
+
+func runServer(panelData map[string]solar.SolarPanelData) error {
+	log.Printf("Loaded solar panel data for %d models.", len(panelData))
+
+	mux := api.Router(panelData)
+	port := os.Getenv("backend_port")
+	if port == "" {
+		port = "8080"
+	}
+
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	log.Printf("Server starting on :%s", port)
+	return srv.ListenAndServe()
+}
+
+func loadEnvIfLocal() {
+	inDocker := false
+	if _, ok := os.LookupEnv("DOCKER_CONTAINER"); ok {
+		inDocker = true
+	}
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		inDocker = true
 	}
-
 	if !inDocker {
-		if err := godotenv.Load(); err != nil {
-			log.Fatalf("Error loading .env file")
-		}
+		_ = godotenv.Load()
 	}
-
-	solarPanelData, err := scraping.LoadSolarPanelData()
-	if err != nil {
-		log.Println("Error loading solar panel data:", err)
-		return
-	}
-	fmt.Println("Loaded solar panel data for", len(solarPanelData), "models.")
-
-	server := api.Router(solarPanelData)
-	port := os.Getenv("backend_port")
-
-	http.ListenAndServe(":"+port, server)
-	log.Println("Server started on port", port)
-
 }

@@ -4,17 +4,42 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/joseph-gunnarsson/solar-cast/internals/scraping"
+	"github.com/joseph-gunnarsson/solar-cast/internals/clients"
+	"github.com/joseph-gunnarsson/solar-cast/internals/solar"
 )
 
 type BaseHandler struct {
-	solarPanelData map[string]scraping.SolarPanelData
+	solarPanelData   map[string]solar.SolarPanelData
+	defaultPanelData map[string]solar.SolarPanelData
 }
 
-func NewBaseHandler(solarPanelData map[string]scraping.SolarPanelData) *BaseHandler {
+func NewBaseHandler(solarPanelData map[string]solar.SolarPanelData) *BaseHandler {
+	defaults := map[string]solar.SolarPanelData{
+		"Mono-Default-400": {
+			ModelNo:                    "Mono-Default-400",
+			MaximumPowerPmax:           400,
+			TemperatureCoefficientPmax: -0.0035,
+			NOCT_Temp:                  45,
+		},
+		"Poly-Default-340": {
+			ModelNo:                    "Poly-Default-340",
+			MaximumPowerPmax:           340,
+			TemperatureCoefficientPmax: -0.0040,
+			NOCT_Temp:                  45,
+		},
+		"Thin-Default-150": {
+			ModelNo:                    "Thin-Default-150",
+			MaximumPowerPmax:           150,
+			TemperatureCoefficientPmax: -0.0025,
+			NOCT_Temp:                  47,
+		},
+	}
+
 	return &BaseHandler{
-		solarPanelData: solarPanelData,
+		solarPanelData:   solarPanelData,
+		defaultPanelData: defaults,
 	}
 }
 
@@ -22,22 +47,18 @@ func (h *BaseHandler) solarPanelAutoCompleteHandler(rw http.ResponseWriter, r *h
 	response := []string{}
 	query := r.PathValue("panel")
 	if query == "" {
-		http.Error(rw, "Query parameter 'query' is required", http.StatusBadRequest)
+		http.Error(rw, "Query parameter 'panel' is required", http.StatusBadRequest)
 		return
 	}
-
-	for model_name := range h.solarPanelData {
-		if strings.Contains(strings.ToLower(model_name), strings.ToLower(query)) {
-			response = append(response, model_name)
+	for modelName := range h.solarPanelData {
+		if strings.Contains(strings.ToLower(modelName), strings.ToLower(query)) {
+			response = append(response, modelName)
 			if len(response) >= 5 {
 				break
 			}
 		}
 	}
-
-	rw.Header().Set("Content-Type", "application/json")
-	rw.WriteHeader(http.StatusOK)
-	json.NewEncoder(rw).Encode(response)
+	writeJSON(rw, http.StatusOK, response)
 }
 
 func (h *BaseHandler) getSolarPanel(rw http.ResponseWriter, r *http.Request) {
@@ -47,8 +68,99 @@ func (h *BaseHandler) getSolarPanel(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "Panel not found", http.StatusNotFound)
 		return
 	}
+	writeJSON(rw, http.StatusOK, panel)
+}
 
-	rw.Header().Set("Content-Type", "application/json")
-	rw.WriteHeader(http.StatusOK)
-	json.NewEncoder(rw).Encode(panel)
+// ---- New handlers ----
+
+// GET /api/location/autocomplete?q=Lon
+func (h *BaseHandler) locationAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < 2 {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	results, err := clients.GeocodeCity(r.Context(), q)
+	if err != nil {
+		http.Error(w, "geocoding failed", http.StatusBadGateway)
+		return
+	}
+	// Return at most 5
+	if len(results) > 5 {
+		results = results[:5]
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+type estimateReq struct {
+	Panel    string  `json:"panel"`              // required
+	Lat      float64 `json:"lat"`                // required
+	Lon      float64 `json:"lon"`                // required
+	Timezone *string `json:"timezone,omitempty"` // from autocomplete; fallback "UTC"
+}
+
+func (h *BaseHandler) estimateHandler(w http.ResponseWriter, r *http.Request) {
+	var req estimateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	p, ok := h.solarPanelData[req.Panel]
+	if !ok {
+		http.Error(w, "unknown panel", http.StatusBadRequest)
+		return
+	}
+
+	if req.Lat < -90 || req.Lat > 90 || req.Lon < -180 || req.Lon > 180 {
+		http.Error(w, "lat/lon out of range", http.StatusBadRequest)
+		return
+	}
+
+	tz := "UTC"
+	if req.Timezone != nil && *req.Timezone != "" {
+		tz = *req.Timezone
+	}
+
+	// Compute “today” in the requested timezone (midnight local)
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		loc = time.UTC
+	} // safe fallback
+	nowLocal := time.Now().In(loc)
+	day := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
+
+	// Weather: hourly temperature_2m + shortwave_radiation (GHI)
+	wp, err := clients.FetchHourlyWeather(r.Context(), req.Lat, req.Lon, day, tz)
+	if err != nil {
+		http.Error(w, "weather fetch failed", http.StatusBadGateway)
+		return
+	}
+
+	// Calculate base + range (uses lowBuffer + TiltBoostFactor inside)
+	points, totalBase, totalLow, totalHigh, err := solar.
+		CalculateHourlyOutputFromWeatherWithRange(p, wp, req.Lat)
+	if err != nil {
+		http.Error(w, "calc failed", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"panel":       req.Panel,
+		"lat":         req.Lat,
+		"lon":         req.Lon,
+		"timezone":    wp.Timezone,
+		"date":        day.Format("2006-01-02"), // returned for clarity
+		"totalWh":     totalBase,
+		"totalLowWh":  totalLow,
+		"totalHighWh": totalHigh,
+		"points":      points,
+	})
+}
+
+// ---- helpers ----
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

@@ -12,13 +12,13 @@ import (
 type HourlyPoint struct {
 	Time           time.Time `json:"time"`
 	Ambient        float64   `json:"ambient"`
-	Irradiance     float64   `json:"irradiance"`
-	EnergyWh       float64   `json:"energyWh"`       // base (flat/GHI)
-	EnergyWhLow    float64   `json:"energyWhLow"`    // lower bound
-	EnergyWhHigh   float64   `json:"energyWhHigh"`   // upper bound (tilt heuristic)
-	CumulativeWh   float64   `json:"cumulativeWh"`   // base cumulative
-	CumulativeLow  float64   `json:"cumulativeLow"`  // low cumulative
-	CumulativeHigh float64   `json:"cumulativeHigh"` // high cumulative
+	GHI            float64   `json:"ghi"`
+	EnergyWh       float64   `json:"energyWh"`
+	EnergyWhLow    float64   `json:"energyWhLow"`
+	EnergyWhHigh   float64   `json:"energyWhHigh"`
+	CumulativeWh   float64   `json:"cumulativeWh"`
+	CumulativeLow  float64   `json:"cumulativeLow"`
+	CumulativeHigh float64   `json:"cumulativeHigh"`
 }
 
 const lowBuffer = 0.9
@@ -115,18 +115,16 @@ func CalculateHourlyOutputFromWeatherWithRange(
 	var totalBase, totalLow, totalHigh float64
 
 	for _, h := range wp.Hours {
-		// Base: horizontal (from GHI)
+
 		baseWh, err := CalculateSolarPanelOutputByHour(panel, h.AmbientTemp, h.IrradianceGHI)
 		if err != nil {
 			return nil, 0, 0, 0, fmt.Errorf("hour %s: %w", h.Time.Format(time.RFC3339), err)
 		}
 
-		// Bounds
 		lowWh := baseWh * lowBuffer
-		boost := TiltBoostFactor(lat, h.Time) // upper bound multiplier (assumes typical fixed tilt near latitude)
+		boost := TiltBoostFactor(lat, h.Time)
 		highWh := baseWh * boost
 
-		// accumulate
 		totalBase += baseWh
 		totalLow += lowWh
 		totalHigh += highWh
@@ -134,7 +132,7 @@ func CalculateHourlyOutputFromWeatherWithRange(
 		points = append(points, HourlyPoint{
 			Time:           h.Time,
 			Ambient:        h.AmbientTemp,
-			Irradiance:     h.IrradianceGHI,
+			GHI:            h.IrradianceGHI,
 			EnergyWh:       baseWh,
 			EnergyWhLow:    lowWh,
 			EnergyWhHigh:   highWh,

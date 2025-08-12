@@ -8,7 +8,6 @@ import (
 )
 
 func TestFetchHourlyWeather_Live(t *testing.T) {
-	// London, today
 	lat := 51.5074
 	lon := -0.1278
 	day := time.Now()

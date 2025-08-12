@@ -9,20 +9,17 @@ import (
 	"time"
 )
 
-// HourWeather is one hourly weather record from Open-Meteo.
 type HourWeather struct {
-	Time          time.Time // Local time in requested timezone
-	AmbientTemp   float64   // °C (temperature_2m)
-	IrradianceGHI float64   // W/m² (shortwave_radiation)
+	Time          time.Time
+	AmbientTemp   float64
+	IrradianceGHI float64
 }
 
-// WeatherPack contains a day's worth of hourly data plus timezone info.
 type WeatherPack struct {
-	Timezone string        `json:"timezone"`
-	Hours    []HourWeather // derived from hourly arrays
+	Timezone string `json:"timezone"`
+	Hours    []HourWeather
 }
 
-// WeatherAPIResponse is the exact JSON shape from Open-Meteo's forecast endpoint.
 type WeatherAPIResponse struct {
 	Timezone string `json:"timezone"`
 	Hourly   struct {
@@ -32,7 +29,6 @@ type WeatherAPIResponse struct {
 	} `json:"hourly"`
 }
 
-// FetchHourlyWeather queries Open-Meteo for one day's hourly temperature and shortwave radiation.
 func FetchHourlyWeather(ctx context.Context, lat, lon float64, day time.Time, timezone string) (WeatherPack, error) {
 	dayStr := day.Format("2006-01-02")
 
@@ -40,7 +36,7 @@ func FetchHourlyWeather(ctx context.Context, lat, lon float64, day time.Time, ti
 	q.Set("latitude", fmt.Sprintf("%.6f", lat))
 	q.Set("longitude", fmt.Sprintf("%.6f", lon))
 	q.Set("hourly", "temperature_2m,shortwave_radiation")
-	q.Set("timezone", timezone) // aligns output times
+	q.Set("timezone", timezone)
 	q.Set("start_date", dayStr)
 	q.Set("end_date", dayStr)
 
@@ -49,7 +45,7 @@ func FetchHourlyWeather(ctx context.Context, lat, lon float64, day time.Time, ti
 	req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
 	req.Header.Set("User-Agent", "solar-cast/1.0 (+contact@example.com)")
 
-	resp, err := httpClient.Do(req) // shared client from clients package
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return WeatherPack{}, err
 	}
@@ -69,12 +65,11 @@ func FetchHourlyWeather(ctx context.Context, lat, lon float64, day time.Time, ti
 		return WeatherPack{}, fmt.Errorf("open-meteo: empty hourly data")
 	}
 
-	// Convert arrays into []HourWeather
 	hours := make([]HourWeather, 0, n)
 	for i := 0; i < n; i++ {
 		locTime, err := parseOMTime(apiResp.Hourly.Time[i], apiResp.Timezone)
 		if err != nil {
-			return WeatherPack{}, err // fail fast instead of silently zero-time
+			return WeatherPack{}, err
 		}
 		hours = append(hours, HourWeather{
 			Time:          locTime,
@@ -89,9 +84,8 @@ func FetchHourlyWeather(ctx context.Context, lat, lon float64, day time.Time, ti
 	}, nil
 }
 
-// helper: parse Open-Meteo time strings
 func parseOMTime(s, tz string) (time.Time, error) {
-	// try full RFC3339 first (in case API ever returns offsets)
+
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
@@ -99,7 +93,7 @@ func parseOMTime(s, tz string) (time.Time, error) {
 	if err != nil {
 		loc = time.UTC
 	}
-	// common OM format when timezone is specified (no seconds/offset)
+
 	if t, err := time.ParseInLocation("2006-01-02T15:04", s, loc); err == nil {
 		return t, nil
 	}

@@ -21,11 +21,20 @@ require (
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/kennygrant/sanitize v1.2.4 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/paulmach/orb v0.11.1 // indirect
+	github.com/ringsaturn/tzf v1.0.0 // indirect
+	github.com/ringsaturn/tzf-rel-lite v0.0.2025-b // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
+	github.com/tidwall/geoindex v1.7.0 // indirect
+	github.com/tidwall/geojson v1.4.5 // indirect
+	github.com/tidwall/rtree v1.10.0 // indirect
+	github.com/twpayne/go-polyline v1.1.1 // indirect
+	go.mongodb.org/mongo-driver v1.11.4 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
-	google.golang.org/protobuf v1.26.0 // indirect
+	google.golang.org/protobuf v1.36.6 // indirect
 )

@@ -2,7 +2,7 @@ import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 
-export default function Home({ onSubmit }) {
+export default function Home({ setRequestData, onEstimate }) {
   const [mode, setMode] = useState("city"); 
   const [query, setQuery] = useState("");
   const [lat, setLat] = useState("");
@@ -15,12 +15,13 @@ export default function Home({ onSubmit }) {
   const [panelSuggestions, setPanelSuggestions] = useState([]);
   const [cityLoading, setCityLoading] = useState(false);
   const [panelLoading, setPanelLoading] = useState(false);
+  const [locations, setLocations] = useState({});
 
   const [useDefaultPanel, setUseDefaultPanel] = useState(true);
   const defaultPanels = [
-    { id: "Mono-Default-400", label: "Mono 400W" },
-    { id: "Poly-Default-340", label: "Poly 340W" },
-    { id: "Thin-Default-150", label: "Thin 150W" },
+    { id: "Mono-Default-400", label: "Mono-Default-400" },
+    { id: "Poly-Default-340", label: "Poly-Default-340" },
+    { id: "Thin-Default-150", label: "Thin-Default-150" },
   ];
 
   useEffect(() => {
@@ -45,17 +46,14 @@ export default function Home({ onSubmit }) {
           return res.json();
         })
         .then((json) => {
-          const list = Array.isArray(json)
-            ? json
-                .map((it) =>
-                  typeof it === "string"
-                    ? it
-                    : it.name
-                    ? `${it.name}${it.country ? `, ${it.country}` : ""}`
-                    : ""
-                )
-                .filter(Boolean)
-            : [];
+          const locations_map = {}
+          const list = [];
+          for (const loc of json) {
+            let name = `${loc.name}${loc.country ? `, ${loc.country}` : ""}`
+            locations_map[name] = loc
+            list.push(name);
+          }
+          setLocations(locations_map);
           setCitySuggestions(list.slice(0, 10));
           setCityLoading(false);
         })
@@ -117,7 +115,6 @@ export default function Home({ onSubmit }) {
 
   function handleSubmit(e) {
     e.preventDefault();
-
     if (!panel.trim()) {
       setError("Please select a solar panel.");
       return;
@@ -129,7 +126,13 @@ export default function Home({ onSubmit }) {
         return;
       }
       setError("");
-      onSubmit?.({ mode, city: query, panel });
+      const location = locations[query.trim()];
+      if (!location) {
+        setError("Location not found.");
+        return;
+      }
+      console.log(location)
+      setRequestData({ lat: location.latitude, lon: location.longitude, panel : panel, timezone: location.timezone });
     } else {
       const latNum = parseFloat(lat);
       const lonNum = parseFloat(lon);
@@ -138,13 +141,17 @@ export default function Home({ onSubmit }) {
         return;
       }
       setError("");
-      onSubmit?.({ mode, lat: latNum, lon: lonNum, panel });
+      setRequestData({ lat: latNum, lon: lonNum, panel : panel });
     }
+    onEstimate();
+
   }
 
   function clearAll() {
     setQuery("");
     setLat("");
+    setLocations([]);
+    setSelectedLocation(null);
     setLon("");
     setError("");
     setCitySuggestions([]);
@@ -191,7 +198,13 @@ export default function Home({ onSubmit }) {
                 <label className="text-sm text-gray-300">Panel</label>
                 <button
                   type="button"
-                  onClick={() => setUseDefaultPanel((v) => !v)}
+                  onClick={() => {
+                    if (!useDefaultPanel) {
+                      setPanel("Mono-Default-400");
+                    }
+
+                    setUseDefaultPanel((v) => !v);
+                  }}
                   className="text-xs px-3 py-1 rounded-xl border border-gray-700 bg-gray-800 hover:bg-gray-700"
                   title={useDefaultPanel ? "Switch to custom panel input" : "Switch to defaults"}
                 >
@@ -203,6 +216,7 @@ export default function Home({ onSubmit }) {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {defaultPanels.map((dp) => {
                     const active = panel === dp.id;
+                    console.log("Default panel selected:", dp.id, "active:", panel);
                     return (
                       <button
                         key={dp.id}
@@ -329,6 +343,16 @@ export default function Home({ onSubmit }) {
               {error}
             </div>
           </form>
+                    <section id="how-it-works" className="container mx-auto px-4 sm:px-6 lg:px-8 pb-20">
+          <div className="max-w-3xl mx-auto text-sm text-gray-300">
+            <h2 className="text-xl font-semibold text-gray-100 mb-2">How it works</h2>
+            <p>
+              Enter your location and select your solar panel model to see how much energy you could produce.
+              Our system factors in local weather conditions, sunlight, and panel characteristics to give you
+              a detailed daily output estimate.
+            </p>
+          </div>
+        </section>
         </section>
       </main>
     </div>

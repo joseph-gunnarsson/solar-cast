@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AreaChart,
   Area,
@@ -11,16 +11,14 @@ import {
   ReferenceArea,
 } from "recharts";
 
-/* ---------- Dummy data ---------- */
 function buildDummyDay() {
   const tz = "Europe/London";
   const date = "2025-08-11";
   const pts = Array.from({ length: 24 }).map((_, i) => {
-    // daylight curve centered near 13:00
     const t = (i - 13) / 6;
     const daylight = Math.max(0, 1 - t * t);
-    const ghi = Math.round(820 * daylight);     // W/m²
-    const energy = Math.max(0, 360 * daylight); // Wh per hour (dummy)
+    const ghi = Math.round(820 * daylight);
+    const energy = Math.max(0, 360 * daylight);
     const low = energy * 0.9;
     const high = energy * 1.1;
 
@@ -34,7 +32,6 @@ function buildDummyDay() {
     };
   });
 
-  // cumulative totals
   let c = 0, cl = 0, ch = 0;
   pts.forEach((p) => {
     c += p.energyWh;
@@ -122,7 +119,7 @@ function BandLabel({ viewBox }) {
   );
 }
 
-/* ---------- UI bits ---------- */
+/* ---------- Small UI helpers ---------- */
 function Card({ children }) {
   return (
     <div className="rounded-2xl border border-gray-800 bg-gray-800/60 p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">
@@ -171,13 +168,82 @@ function PillToggle({ checked, onChange, labelOn = "Range: On", labelOff = "Rang
   );
 }
 
+/* ---------- Loading / Error UI ---------- */
+function LoadingSkeleton() {
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100">
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6 animate-pulse">
+        <div className="h-8 w-60 bg-gray-700/50 rounded" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="h-24 bg-gray-800/60 rounded-2xl" />
+          <div className="h-24 bg-gray-800/60 rounded-2xl" />
+        </div>
+        <div className="h-[340px] bg-gray-800/60 rounded-2xl" />
+        <div className="h-[300px] bg-gray-800/60 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+function ErrorPanel({ message }) {
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 grid place-items-center">
+      <div className="max-w-md w-full rounded-2xl border border-red-900 bg-red-950/40 p-6">
+        <div className="text-lg font-semibold text-red-300 mb-2">Something went wrong</div>
+        <div className="text-sm text-red-200/90">{message || "Unknown error"}</div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Page ---------- */
-export default function Estimate() {
-  const data = useMemo(() => buildDummyDay(), []);
+export default function Estimate({ requestData }) {
+  const [data, setData] = useState(null);
   const [cumulative, setCumulative] = useState(true);
   const [showRange, setShowRange] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
 
+  // Fetch on mount and whenever requestData changes
+  useEffect(() => {
+    console.log("Fetching estimate data for:", requestData);
+    if (!requestData) return;
+    const url = `/api/api/solar/estimate`;
+    const ac = new AbortController();
+
+    setLoading(true);
+    setErr(null);
+    setData(null);
+
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestData),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          throw new Error(`Request failed with status ${res.status}`);
+        }
+        const json = await res.json();
+        setData(json);
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          console.error(e);
+          console.log(e)
+          setErr(e);
+        }
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [requestData]);
+
+  /* ---- Derived data with guards ---- */
   const rowsEnergy = useMemo(() => {
+    if (!data?.points || !data?.timezone) return [];
     const tz = data.timezone;
     return data.points.map((p) => ({
       label: timeLabel(p.time, tz),
@@ -188,6 +254,8 @@ export default function Estimate() {
   }, [data, cumulative]);
 
   const rowsGHI = useMemo(() => {
+    if (!data?.points || !data?.timezone) return [];
+    console.log("data points", data.points)
     const tz = data.timezone;
     return data.points.map((p) => ({
       label: timeLabel(p.time, tz),
@@ -196,6 +264,7 @@ export default function Estimate() {
   }, [data]);
 
   const peakPoint = useMemo(() => {
+    if (!data?.points) return null;
     let max = -1, best = null;
     for (const p of data.points) {
       if (p.energyWh > max) { max = p.energyWh; best = p; }
@@ -203,19 +272,24 @@ export default function Estimate() {
     return best;
   }, [data]);
 
-  // y-bounds for band label box
-  const bandY1 = useMemo(
-    () => Math.min(...rowsEnergy.map((d) => d.low ?? d.base)),
-    [rowsEnergy]
-  );
-  const bandY2 = useMemo(
-    () => Math.max(...rowsEnergy.map((d) => d.high ?? d.base)),
-    [rowsEnergy]
-  );
+  const bandY1 = useMemo(() => {
+    if (!rowsEnergy.length) return 0;
+    return Math.min(...rowsEnergy.map((d) => (d.low ?? d.base ?? 0)));
+  }, [rowsEnergy]);
+
+  const bandY2 = useMemo(() => {
+    if (!rowsEnergy.length) return 0;
+    return Math.max(...rowsEnergy.map((d) => (d.high ?? d.base ?? 0)));
+  }, [rowsEnergy]);
+
+  /* ---- Render states ---- */
+  if (loading) return <LoadingSkeleton />;
+  if (err) return <ErrorPanel message={err.message} />;
+  if (!data) return <div className="min-h-screen bg-gray-900 text-gray-100 grid place-items-center">No data yet.</div>;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
-      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      <div className="max-w-6xl mx-auto px-4 py-8 space-y-6" aria-busy={loading}>
         {/* Header */}
         <div className="flex items-end justify-between">
           <div>
@@ -284,7 +358,7 @@ export default function Estimate() {
                 <XAxis dataKey="label" stroke="#E5E7EB" />
                 <YAxis unit=" Wh" stroke="#E5E7EB" />
                 <Tooltip content={<EnergyTooltip />} />
-                {showRange && (
+                {showRange && rowsEnergy.length > 0 && (
                   <>
                     <Area dataKey="high" type="monotone" stroke="#FBBF24" fill="url(#rangeFill)" />
                     <Area dataKey="low"  type="monotone" stroke="#FBBF24" fill="url(#rangeFill)" />

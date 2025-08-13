@@ -160,7 +160,8 @@ func GatherSolarPanelData(urls []string) map[string]solar.SolarPanelData {
 		err := c.Visit(url)
 		if err != nil {
 			log.Println("Failed to visit product URL:", url, "Error:", err)
-			break
+			time.Sleep(5 * time.Second)
+			continue
 		}
 		solarPanelDataMap[solarPanelData.ModelNo] = solarPanelData
 		solarPanelData = solar.SolarPanelData{}

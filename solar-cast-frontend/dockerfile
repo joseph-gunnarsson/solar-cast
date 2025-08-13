@@ -1,0 +1,18 @@
+FROM node:24.5-alpine
+WORKDIR /app
+
+# Install dependencies first for better caching
+COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* .npmrc* ./
+RUN if [ -f package-lock.json ]; then npm ci; \
+    elif [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install --frozen-lockfile; \
+    elif [ -f yarn.lock ]; then npm install -g yarn && yarn install --frozen-lockfile; \
+    else npm install; fi
+
+# Copy the rest of the source
+COPY . .
+
+# Expose Vite dev server port
+EXPOSE 5173
+
+# Run Vite in dev mode and listen on all interfaces (needed in Docker)
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

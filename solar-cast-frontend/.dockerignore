@@ -1,0 +1,20 @@
+# repo history
+.git
+.gitignore
+
+# dependencies & build outputs
+node_modules/
+dist/
+.vite/
+
+# tests & coverage
+coverage/
+*.log
+
+# editors & OS
+.vscode
+.idea
+.DS_Store
+
+# env files — comment out if you want to COPY them into the image
+.env*

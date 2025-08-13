@@ -527,7 +527,6 @@ function Highlighted({ text, query }) {
 function SolarHeroIllustration() {
   return (
     <svg className="w-full h-auto" viewBox="0 0 960 360" role="img" aria-label="Sun charging a pulsating side-profile solar panel">
-      {/* ... unchanged illustration ... */}
       <defs>
         <linearGradient id="panelGradient" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor="rgba(255,180,100,0.2)" />

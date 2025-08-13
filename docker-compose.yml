@@ -1,0 +1,85 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    restart: unless-stopped
+
+  backend:
+    container_name: solarcast-backend
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    working_dir: /app
+    entrypoint: ["/app/server"]          
+    command: ["-serve"]                   
+    environment:
+      DOCKER_CONTAINER: "1"
+      backend_port: "8080"
+      REDIS_URL: "redis:6379"
+      REDIS_PASSWORD: ""
+      ADMIN_TOKEN_SECRET: "super_secret_token"
+    ports: ["8080:8080"]
+    volumes:
+      - ./backend/data:/app/data
+    depends_on: [redis]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+
+  scrape:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    working_dir: /app
+    entrypoint: ["/app/server"]        
+    command: ["-scrape", "-pages", "15"]
+    volumes:
+      - ./backend/data:/app/data
+    depends_on:
+      backend:
+        condition: service_started
+    restart: "no"
+
+
+  notify_reload:
+    image: curlimages/curl:8.8.0
+    environment:
+      ADMIN_TOKEN_SECRET: "super_secret_token"
+    depends_on:
+      scrape:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        until curl -fsS http://backend:8080/api/health >/dev/null; do sleep 1; done
+        curl -fsS -X POST \
+          -H "X-Admin-Token: $${ADMIN_TOKEN_SECRET}" \
+          http://backend:8080/api/admin/reload
+    restart: "no"
+
+
+  frontend:
+    container_name: solarcast-frontend
+    build:
+      context: ./solar-cast-frontend
+      dockerfile: dockerfile
+    environment:
+      VITE_PROXY_TARGET: "http://backend:8080/"
+    volumes:
+      - ./solar-cast-frontend:/app
+    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0"
+    ports: ["5173:5173"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  redis-data:

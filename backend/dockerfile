@@ -1,0 +1,25 @@
+FROM golang:1.24.4-alpine AS builder
+WORKDIR /src
+RUN apk add --no-cache ca-certificates git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+ENV CGO_ENABLED=0
+# your main is in cmd/main.go
+RUN go build -o /server ./cmd
+
+# ---- run ----
+FROM alpine:3.20
+WORKDIR /app
+RUN apk add --no-cache ca-certificates tzdata
+
+# app binary
+COPY --from=builder /server /app/server
+
+# *** key line: copy your placeholder data into /app/data ***
+COPY /data /app/data
+
+EXPOSE 8080
+CMD ["/app/server", "-serve"]

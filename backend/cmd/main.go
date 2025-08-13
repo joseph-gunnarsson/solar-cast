@@ -11,10 +11,10 @@ import (
 	"github.com/joseph-gunnarsson/solar-cast/api"
 	"github.com/joseph-gunnarsson/solar-cast/internals/scraping"
 	"github.com/joseph-gunnarsson/solar-cast/internals/solar"
+	red "github.com/joseph-gunnarsson/solar-cast/redis"
 )
 
 func main() {
-	// Flags
 	scrape := flag.Bool("scrape", false, "run web scraping to collect panel data")
 	serve := flag.Bool("serve", false, "start the HTTP server")
 	pages := flag.Int("pages", 1, "number of pages to scrape from ENF Solar listing")
@@ -34,7 +34,7 @@ func main() {
 	}
 
 	if *serve {
-		// Prefer freshly-scraped data; otherwise load from disk.
+
 		data := scraped
 		if len(data) == 0 {
 			data, err = solar.LoadSolarPanelData()
@@ -53,7 +53,6 @@ func main() {
 	}
 }
 
-// runScrape collects panel URLs, scrapes details, and saves to file.
 func runScrape(pages int) (map[string]solar.SolarPanelData, error) {
 	log.Printf("Starting scrape for %d page(s)…", pages)
 	urls := scraping.GetProductURLs(pages)
@@ -77,8 +76,8 @@ func runScrape(pages int) (map[string]solar.SolarPanelData, error) {
 
 func runServer(panelData map[string]solar.SolarPanelData) error {
 	log.Printf("Loaded solar panel data for %d models.", len(panelData))
-
-	mux := api.Router(panelData)
+	redisClient := red.GetRedisConnection()
+	mux := api.Router(panelData, redisClient)
 	port := os.Getenv("backend_port")
 	if port == "" {
 		port = "8080"
